@@ -19,13 +19,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <asm-arm/kvm.h>
+#include <sys/stat.h>
 #include <linux/kvm.h>
 
 #include <io_common.h>
 
 #define pr_err(fmt, args...) fprintf(stderr, fmt "\n", args)
+#define pr_errno(fmt, args...) \
+	fprintf(stderr, fmt ": %s\n", args, strerror(errno))
 
 #define MAP_SIZE (4 * 4096) // Four pages of assembly, my hands won't bleed
 #define PAGE_SIZE (4096)
@@ -45,11 +51,8 @@ static struct kvm_userspace_memory_region code_mem;
 static void *rw_base;
 static struct kvm_userspace_memory_region rw_mem;
 
-#define IO_DATA_BASE (0xc0000000)
 static char *io_data = IO_DATA;
 
-#define IO_CTL_BASE (0xf0000000)
-#define IO_DATA_SIZE (1)
 
 static int create_vm(void)
 {
@@ -101,7 +104,7 @@ static int kvm_register_mem(int id, void *addr, unsigned long base,
 
 	ret = ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, mem);
 	if (ret < 0) {
-		perror("error registering region: %d", id);
+		pr_errno("error registering region: %d", id);
 		return -1;
 	}
 	return 0;
@@ -116,7 +119,7 @@ static int register_memregions(const char *code_file)
 	if (code_base == MAP_FAILED) {
 		perror("mmap code file failed!");
 		return -1;
-	} else if (code_base & ~PAGE_MASK) {
+	} else if ((unsigned long)code_base & ~PAGE_MASK) {
 		pr_err("mmap code file on non-page boundary: %p", code_base);
 		return -1;
 	}
@@ -130,7 +133,7 @@ static int register_memregions(const char *code_file)
 	if (rw_base == MAP_FAILED) {
 		perror("mmap rw failed!");
 		return -1;
-	} else if (rw_base & ~PAGE_MASK) {
+	} else if ((unsigned long)rw_base & ~PAGE_MASK) {
 		pr_err("mmap rw region on non-page boundary: %p", rw_base);
 		return -1;
 	}
@@ -150,7 +153,7 @@ static int init_vcpu(void)
 	regs.reg13[MODE_SVC] = RW_PHYS_BASE + MAP_SIZE;
 
 	if (ioctl(vcpu_fd, KVM_SET_REGS, &regs) < 0) {
-		perror("error setting VCPU registers"):
+		perror("error setting VCPU registers");
 		return -1;
 	}
 	return 0;
@@ -167,8 +170,8 @@ static int check_write(unsigned long offset, void *_data, unsigned long len)
 		printf("ERROR: VM write mismatch:\n"
 		       "VM data: %c%c%c%c%c%c%c%c\n"
 		       "IO data: %c%c%c%c%c%c%c%c\n"
-		       "    len: %u\n"
-		       " offset: %u\n",
+		       "    len: %lu\n"
+		       " offset: %lu\n",
 		       data[0], data[1], data[2], data[3],
 		       data[4], data[5], data[6], data[7],
 		       host_data[0], host_data[1], host_data[2], host_data[3],
@@ -197,10 +200,10 @@ static int handle_mmio(void)
 	bool is_write;
 	int ret;
 
-	phys_addr = run->mmio.phys_addr;
-	data = run->mmio.data;
-	len = mmio.len;
-	is_write = run->mmio.is_write;
+	phys_addr = kvm_run->mmio.phys_addr;
+	data = kvm_run->mmio.data;
+	len = kvm_run->mmio.len;
+	is_write = kvm_run->mmio.is_write;
 
 	/* Test if we're reading/writing data */
 	if (phys_addr >= IO_DATA_BASE &&
@@ -212,7 +215,7 @@ static int handle_mmio(void)
 	}
 
 	/* Test if it's a control operation */
-	if (phys_addr >= IO_CTL_BASE && len = IO_DATA_SIZE)
+	if (phys_addr >= IO_CTL_BASE && len == IO_DATA_SIZE) {
 		if (!is_write)
 			return -1; /* only writes allowed */
 		switch (data[0]) {
@@ -238,7 +241,7 @@ static int kvm_cpu_exec(void)
 	while (should_run) {
 		ret = ioctl(vcpu_fd, KVM_RUN, 0);
 
-		if (run_ret == -EINTR || run_ret == -EAGAIN) {
+		if (ret == -EINTR || ret == -EAGAIN) {
 			continue;
 		} else if (ret < 0) {
 			perror("Error running vcpu");
@@ -259,7 +262,7 @@ static int kvm_cpu_exec(void)
 
 static void usage(int argc, const char *argv[])
 {
-	printf("Usage: %s <binary>\n");
+	printf("Usage: %s <binary>\n", argv[0]);
 }
 
 int main(int argc, const char *argv[])
@@ -268,7 +271,7 @@ int main(int argc, const char *argv[])
 	const char *file;
 
 	if (argc != 2) {
-		usage();
+		usage(argc, argv);
 		return EXIT_FAILURE;
 	}
 	file = argv[1];
