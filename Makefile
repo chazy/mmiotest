@@ -14,20 +14,27 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.# 
 
+GCC=$(CROSS_COMPILE)gcc
 CC=$(CROSS_COMPILE)gcc
 AS=$(CROSS_COMPILE)as
 LD=$(CROSS_COMPILE)ld
+OBJCOPY=$(CROSS_COMPILE)objcopy
+
+LDFLAGS = -static
 
 CFLAGS = -I./include -I./linux-headers
 
-all: guest-driver mmio-guest.o
+all: guest-driver mmio-guest
 
 DRIVER_OBJS = guest-driver.o
 guest-driver: $(DRIVER_OBJS)
-	$(LD) -o $@ $(DRIVER_OBJS)
+	$(GCC) $(LDFLAGS) -o $@ $(DRIVER_OBJS)
 
 mmio-guest.o: mmio-guest.S
-	$(AS) -o $@ $<
+	$(GCC) $(CFLAGS) -c -o $@ $<
+
+mmio-guest: mmio-guest.o
+	$(LD) -o $@ $< --script=mmio-guest.lds
 
 OBJS	= mmio-guest.o $(DRIVER_OBJS)
 

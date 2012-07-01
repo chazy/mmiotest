@@ -69,7 +69,7 @@ static int create_vcpu(void)
 {
 	int mmap_size;
 
-	vcpu_fd = kvm_vm_ioctl(vm_fd, KVM_CREATE_VCPU, 0);
+	vcpu_fd = ioctl(vm_fd, KVM_CREATE_VCPU, 0);
 	if (vcpu_fd < 0) {
 		perror("kvm_create_vcpu failed");
 		return -1;

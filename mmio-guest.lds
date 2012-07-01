@@ -1,5 +1,5 @@
 /*
- * mmio-guest.S - world's simplest VM os - purely MMIO test
+ * mmio-guest.lds.S - linker script for MMIO guest
  * Copyright (C) 2012 Christoffer Dall <cdall@cs.columbia.edu>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -15,12 +15,26 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.# 
  */
-#include <io_common.h>
 
-.arm
-.text
+OUTPUT_FORMAT("elf32-littlearm")
+OUTPUT_ARCH(arm)
+TARGET(binary)
 
-1:	mov	r0, #CTL_OK
-	ldr	lr, =IO_CTL_BASE
-	str	r0, [lr]
-	b	1b
+PHYS_OFFSET = 0x80000000;
+STACKTOP    = 0x40000000;
+
+
+SECTIONS
+{
+ . = PHYS_OFFSET;
+
+ /* Put most of the actual boot loader code up in high memory
+  * where it won't get overwritten by kernel, initrd or atags.
+  */
+ .text : { *(.text) }
+ .data : { *(.data) }
+ .bss : { *(.bss) }
+
+ . = STACKTOP;
+ stacktop = .;
+}
