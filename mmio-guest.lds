@@ -16,9 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.# 
  */
 
-OUTPUT_FORMAT("elf32-littlearm")
 OUTPUT_ARCH(arm)
-TARGET(binary)
 
 PHYS_OFFSET = 0x80000000;
 STACKTOP    = 0x40000000;

@@ -24,17 +24,20 @@ LDFLAGS = -static
 
 CFLAGS = -I./include -I./linux-headers
 
-all: guest-driver mmio-guest
+all: guest-driver mmio-guest.bin
 
 DRIVER_OBJS = guest-driver.o mmio-host.o
 guest-driver: $(DRIVER_OBJS)
 	$(GCC) $(LDFLAGS) -o $@ $(DRIVER_OBJS)
 
 mmio-guest.o: mmio-guest.S
-	$(GCC) $(CFLAGS) -c -o $@ $<
+	$(GCC) $(CFLAGS) -fno-builtin -ffreestanding -c -o $@ $<
 
-mmio-guest: mmio-guest.o
-	$(LD) -o $@ $< --script=mmio-guest.lds
+mmio-guest: mmio-guest.o mmio-guest.lds
+	$(LD) -o $@ --script=mmio-guest.lds $< 
+
+mmio-guest.bin: mmio-guest
+	$(OBJCOPY) -O binary $< $@
 
 OBJS	= mmio-guest.o $(DRIVER_OBJS)
 
@@ -42,6 +45,6 @@ OBJS	= mmio-guest.o $(DRIVER_OBJS)
 	$(CC) $(CFLAGS) -g -c -o $@ $<
 
 clean distclean:
-	rm -f mmio-guest.o guest-driver $(OBJS)
+	rm -f mmio-guest mmio-guest.bin guest-driver $(OBJS)
 
 .PHONY: clean distclean headers
