@@ -20,7 +20,7 @@
 .arm
 .text
 
-1:	mov	r0, #CTL_OK
+1:	mov	r0, #CTL_DONE
 	ldr	lr, =IO_CTL_BASE
-	str	r0, [lr]
+	strb	r0, [lr]
 	b	1b

@@ -8,5 +8,6 @@
 #define IO_DATA_SIZE (1)
 #define CTL_OK		0
 #define CTL_ERR		1
+#define CTL_DONE	255
 
 #endif /* __IO_DATA_H */

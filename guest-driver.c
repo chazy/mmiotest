@@ -28,19 +28,7 @@
 #include <linux/kvm.h>
 
 #include <io_common.h>
-
-#define pr_err(fmt, args...) fprintf(stderr, fmt "\n", args)
-#define pr_errno(fmt, args...) \
-	fprintf(stderr, fmt ": %s\n", args, strerror(errno))
-
-#define MAP_SIZE (4 * 4096) // Four pages of assembly, my hands won't bleed
-#define PAGE_SIZE (4096)
-#define PAGE_MASK (~(PAGE_SIZE - 1))
-
-#define CODE_SLOT 0
-#define CODE_PHYS_BASE (0x80000000)
-#define RW_SLOT 1
-#define RW_PHYS_BASE (0x40000000)
+#include <guest-driver.h>
 
 static int sys_fd;
 static int vm_fd;
@@ -48,10 +36,7 @@ static int vcpu_fd;
 static struct kvm_run *kvm_run;
 static void *code_base;
 static struct kvm_userspace_memory_region code_mem;
-static void *rw_base;
-static struct kvm_userspace_memory_region rw_mem;
 
-static char *io_data = IO_DATA;
 
 
 static int create_vm(void)
@@ -98,7 +83,7 @@ static int kvm_register_mem(int id, void *addr, unsigned long base,
 
 	mem->slot = id;
 	mem->guest_phys_addr = base;
-	mem->memory_size = MAP_SIZE;
+	mem->memory_size = RAM_SIZE;
 	mem->userspace_addr = (unsigned long)addr;
 	mem->flags = 0;
 
@@ -110,37 +95,60 @@ static int kvm_register_mem(int id, void *addr, unsigned long base,
 	return 0;
 }
 
-static int register_memregions(const char *code_file)
+static int register_memregions(void)
 {
 	int ret;
 
-	code_base = mmap(NULL, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE,
-			 vm_fd, 0);
+	code_base = mmap(NULL, RAM_SIZE, PROT_READ | PROT_WRITE,
+			 MAP_SHARED | MAP_ANONYMOUS, 0, CODE_PHYS_BASE);
 	if (code_base == MAP_FAILED) {
-		perror("mmap code file failed!");
+		perror("mmap RAM region failed");
 		return -1;
 	} else if ((unsigned long)code_base & ~PAGE_MASK) {
-		pr_err("mmap code file on non-page boundary: %p", code_base);
+		pr_err("mmap RAM on non-page boundary: %p", code_base);
 		return -1;
 	}
 	ret = kvm_register_mem(CODE_SLOT, code_base, CODE_PHYS_BASE, &code_mem);
 	if (ret)
 		return -1;
 
+	return 0;
+}
 
-	rw_base = mmap(NULL, MAP_SIZE, PROT_READ | PROT_WRITE,
-		       MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
-	if (rw_base == MAP_FAILED) {
-		perror("mmap rw failed!");
-		return -1;
-	} else if ((unsigned long)rw_base & ~PAGE_MASK) {
-		pr_err("mmap rw region on non-page boundary: %p", rw_base);
+static int load_code(const char *code_file)
+{
+	int fd = open(code_file, O_RDONLY);
+	struct stat stat;
+	char *data;
+
+	if (fd < 0) {
+		perror("cannot open code file\n");
 		return -1;
 	}
-	ret = kvm_register_mem(RW_SLOT, rw_base, RW_PHYS_BASE, &rw_mem);
-	if (ret)
-		return -1;
 
+	if (fstat(fd, &stat) < 0) {
+		perror("cannot stat code file\n");
+		close(fd);
+		return -1;
+	}
+
+	if (stat.st_size > RAM_SIZE) {
+		pr_err("code file way too large for this tiny VM\n");
+		close(fd);
+		return -1;
+	}
+
+	data = mmap(NULL, stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (data == MAP_FAILED) {
+		perror("cannot stat code file\n");
+		close(fd);
+		return -1;
+	}
+
+	memcpy(code_base, data, stat.st_size);
+
+	munmap(data, stat.st_size);
+	close(fd);
 	return 0;
 }
 
@@ -148,9 +156,13 @@ static int init_vcpu(void)
 {
 	struct kvm_regs regs;
 
-	memset(&regs, 0, sizeof(regs));
+	if (ioctl(vcpu_fd, KVM_GET_REGS, &regs) < 0) {
+		perror("error getting VCPU registers");
+		return -1;
+	}
+
 	regs.reg15 = CODE_PHYS_BASE;
-	regs.reg13[MODE_SVC] = RW_PHYS_BASE + MAP_SIZE;
+	regs.reg13[MODE_SVC] = CODE_PHYS_BASE + RAM_SIZE;
 
 	if (ioctl(vcpu_fd, KVM_SET_REGS, &regs) < 0) {
 		perror("error setting VCPU registers");
@@ -159,86 +171,12 @@ static int init_vcpu(void)
 	return 0;
 }
 
-static int check_write(unsigned long offset, void *_data, unsigned long len)
-{
-	char *data, *host_data;
-
-	data = _data;
-	host_data = io_data + offset;
-
-	if (memcmp(data, host_data, len)) {
-		printf("ERROR: VM write mismatch:\n"
-		       "VM data: %c%c%c%c%c%c%c%c\n"
-		       "IO data: %c%c%c%c%c%c%c%c\n"
-		       "    len: %lu\n"
-		       " offset: %lu\n",
-		       data[0], data[1], data[2], data[3],
-		       data[4], data[5], data[6], data[7],
-		       host_data[0], host_data[1], host_data[2], host_data[3],
-		       host_data[4], host_data[5], host_data[6], host_data[7],
-		       len, offset);
-		return -1;
-	}
-
-	return 0;
-}
-
-static int do_read(unsigned long offset, void *data, unsigned long len)
-{
-	char *host_data;
-
-	host_data = io_data + offset;
-	memcpy(data, host_data, len);
-	return 0;
-}
-
-static int handle_mmio(void)
-{
-	unsigned long long phys_addr;
-	unsigned char *data;
-	unsigned long len;
-	bool is_write;
-	int ret;
-
-	phys_addr = kvm_run->mmio.phys_addr;
-	data = kvm_run->mmio.data;
-	len = kvm_run->mmio.len;
-	is_write = kvm_run->mmio.is_write;
-
-	/* Test if we're reading/writing data */
-	if (phys_addr >= IO_DATA_BASE &&
-	    phys_addr + len < IO_DATA_BASE + strlen(io_data)) {
-		if (is_write)
-			ret = check_write(phys_addr - IO_DATA_BASE, data, len);
-		else
-			ret = do_read(phys_addr - IO_DATA_BASE, data, len);
-	}
-
-	/* Test if it's a control operation */
-	if (phys_addr >= IO_CTL_BASE && len == IO_DATA_SIZE) {
-		if (!is_write)
-			return -1; /* only writes allowed */
-		switch (data[0]) {
-		case CTL_OK:
-			printf("PASS: Guest reads what it expects\n");
-			return 1;
-		case CTL_ERR:
-			printf("ERROR: Guest had error\n");
-			return -1;
-		default:
-			printf("INFO: Guest wrote %d\n", data[0]);
-		}
-	}
-
-	return 0;
-}
 
 static int kvm_cpu_exec(void)
 {
 	int ret;
-	bool should_run = true;
 
-	while (should_run) {
+	while (1) {
 		ret = ioctl(vcpu_fd, KVM_RUN, 0);
 
 		if (ret == -EINTR || ret == -EAGAIN) {
@@ -249,11 +187,11 @@ static int kvm_cpu_exec(void)
 		}
 
 		if (kvm_run->exit_reason == KVM_EXIT_MMIO) {
-			ret = handle_mmio();
+			ret = handle_mmio(kvm_run);
 			if (ret < 0)
 				return -1;
 			else if (ret > 0)
-				should_run = false;
+				break;
 		}
 	}
 
@@ -287,7 +225,11 @@ int main(int argc, const char *argv[])
 	if (ret)
 		return EXIT_FAILURE;
 
-	ret = register_memregions(file);
+	ret = register_memregions();
+	if (ret)
+		return EXIT_FAILURE;
+
+	ret = load_code(file);
 	if (ret)
 		return EXIT_FAILURE;
 
@@ -300,7 +242,7 @@ int main(int argc, const char *argv[])
 		return EXIT_FAILURE;
 	
 	ret = kvm_cpu_exec();
-	if (ret < 0)
+	if (ret)
 		return EXIT_FAILURE;
 
 	return EXIT_SUCCESS;

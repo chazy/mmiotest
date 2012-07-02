@@ -26,7 +26,7 @@ CFLAGS = -I./include -I./linux-headers
 
 all: guest-driver mmio-guest
 
-DRIVER_OBJS = guest-driver.o
+DRIVER_OBJS = guest-driver.o mmio-host.o
 guest-driver: $(DRIVER_OBJS)
 	$(GCC) $(LDFLAGS) -o $@ $(DRIVER_OBJS)
 
