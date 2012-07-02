@@ -68,13 +68,13 @@ static int do_read(unsigned long offset, void *data, unsigned long len)
 /* Return anything else than 0 to stop the VM */
 int handle_mmio(struct kvm_run *kvm_run)
 {
-	unsigned long long phys_addr;
+	unsigned long phys_addr;
 	unsigned char *data;
 	unsigned long len;
 	bool is_write;
 	int ret;
 
-	phys_addr = kvm_run->mmio.phys_addr;
+	phys_addr = (unsigned long)kvm_run->mmio.phys_addr;
 	data = kvm_run->mmio.data;
 	len = kvm_run->mmio.len;
 	is_write = kvm_run->mmio.is_write;
@@ -86,6 +86,7 @@ int handle_mmio(struct kvm_run *kvm_run)
 			ret = check_write(phys_addr - IO_DATA_BASE, data, len);
 		else
 			ret = do_read(phys_addr - IO_DATA_BASE, data, len);
+		return ret;
 	}
 
 	/* Test if it's a control operation */
@@ -96,9 +97,12 @@ int handle_mmio(struct kvm_run *kvm_run)
 		case CTL_OK:
 			printf("PASS: Guest reads what it expects\n");
 			return 0;
+		case CTL_FAIL:
+			printf("FAIL: Guest read fail\n");
+			return 0;
 		case CTL_ERR:
 			printf("ERROR: Guest had error\n");
-			return -1;
+			return 1;
 		case CTL_DONE:
 			printf("VM shutting down\n");
 			return 1;
@@ -107,6 +111,7 @@ int handle_mmio(struct kvm_run *kvm_run)
 		}
 	}
 
-	pr_err("Guest accessed unexisting mem area\n");
+	pr_err("Guest accessed unexisting mem area: %#08lx + %#08lx\n",
+	       phys_addr, len);
 	return -1;
 }

@@ -17,10 +17,69 @@
  */
 #include <io_common.h>
 
-.arm
-.text
+/******************************************************************************
+ * Test code
+ */
+ctl	.req	r12	@ control IO base address
+lio	.req	r11	@ local IO
+hio	.req	r10	@ host IO
 
-1:	mov	r0, #CTL_DONE
-	ldr	lr, =IO_CTL_BASE
-	strb	r0, [lr]
-	b	1b
+/* assumes ctl == IO_CTL_BASE */
+.macro ctl_ok
+	mov	r0, #CTL_OK
+	strb	r0, [ctl]
+.endm
+
+	.arm
+	.text
+
+	@ Get some basic addresses into registers
+	ldr	ctl, =IO_CTL_BASE
+	ldr	hio, =IO_DATA_BASE
+	ldr	lio, =io_data
+
+	@ Perform a simple load test
+	ldr	r0, [hio]
+	ldr	r1, [lio]
+	cmp	r0, r1
+	blne	fail
+	bleq	ok
+
+	@ Perform a simple load test
+	ldr	r0, [lio]
+	str	r0, [hio]
+
+	@ Program (VM) done, all test cases completed
+	b	done
+
+.macro ok_fail ok
+	push	{r0}
+	.if \ok == 1
+	mov	r0, #CTL_OK
+	.else
+	mov	r0, #CTL_FAIL
+	.endif
+	strb	r0, [ctl]
+	pop	{r0}
+	bx	lr
+.endm
+
+ok:
+	ok_fail	1
+fail:
+	ok_fail	0
+done:
+	mov	r0, #CTL_DONE
+	strb	r0, [ctl]
+
+err:
+	mov	r0, #CTL_ERR
+	strb	r0, [ctl]
+
+/******************************************************************************
+ * Test Data to transfer via MMIO
+ */
+
+	.data
+io_data:
+	.ascii IO_DATA
