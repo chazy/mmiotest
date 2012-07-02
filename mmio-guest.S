@@ -45,9 +45,18 @@ hio	.req	r10	@ host IO
 	blne	fail
 	bleq	ok
 
-	@ Perform a simple load test
+	@ Perform a simple write test
 	ldr	r0, [lio]
 	str	r0, [hio]
+
+	@ Perform a load-multiple load test
+	ldmia	hio, {r1, r2, r3}
+	ldmia	lio, {r4, r5, r6}
+	cmp	r1, r4
+	cmpeq	r2, r5
+	cmpeq	r3, r6
+	blne	fail
+	bleq	ok
 
 	@ Program (VM) done, all test cases completed
 	b	done
