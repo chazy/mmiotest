@@ -1,9 +1,8 @@
 About
 =============
 
-A small test program to create a VM that does all sorts of MMIO
-operations and verify that these get decoded properly by the
-KVM/ARM module.
+A small python script to generate test cases for all sort of MMIO
+instructions.
 
 License: GPLv3
 
@@ -15,5 +14,5 @@ In theory:
 
     git clone git://github.com/chazy/mmiotest.git
     cd mmiotest
-    make
-    ./guest-driver <mmio-test.o>
+    ./generate.py
+    # do something clever with the output
