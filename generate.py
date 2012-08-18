@@ -70,6 +70,71 @@ LS_core_list = [
     LS_core("strexd",  True,     64,      Extra.NONE,      False ),
     ]
 
+#
+# The ARM instruction set specifies that load/stores are performed using:
+#  - a base register
+#  - an offset
+#
+# For testing we use:
+#  - Dest reg:   r0, r3
+#  - Base reg:   r2, r5
+#  - Offset reg: r8, r11 (preload to 8, 16)
+#
+# The following combinations show the (mostly) valid combinations:
+#
+#   mode         |    Immediate      Register        Scaled register
+# ---------------|----------------------------------------------------
+#  Offset        |   [Rn, #off]      [Rn, Rm]    [Rn, Rm, LSL #shift]
+#  Pre-indexed   |   [Rn, #off]!     [Rn, Rm]!   [Rn, Rm, LSL #shift]!
+#  Post-indexed  |   [Rn], #off]     [Rn], Rm    [Rn], Rm, LSL #shift
+#
+# TODO: Additional things to test for
+#  - Rm is always both +/-
+#  - test RRX shift on scaled register
+#
+
+def ls_instr_offsets():
+    lst = []
+    imm_offsets = [0, 13, 16, 124, 255, 1020, 4095]
+    reg_offsets = [8, 11]
+    shift_amts = [2, 3]
+    shifts = ["LSL", "LSR", "ASR", "ROR"]
+    shift_offsets = []
+    for s in shifts:
+        for amt in shift_amts:
+            shift_offsets.append("%s #%d" % (s, amt))
+    lst.extend(["#%d" % (off) for off in imm_offsets])
+    lst.extend(["r%d" % (reg) for reg in reg_offsets])
+    lst.extend(["r8, %s" % (s) for s in shift_offsets])
+    return lst
+
+off_list = ls_instr_offsets()
+def ls_instr_vars(instr):
+    lst = []
+    dst = ["r0", "r3"]
+    base = ["r2", "r5"]
+
+    for d in dst:
+        for b in base:
+            for o in off_list:
+                # mode: offset
+                i = "%s\t%s, [%s, %s]" %(instr.instr, d, b, o)
+                # mode: pre-indexed
+                j = "%s\t%s, [%s, %s]!" %(instr.instr, d, b, o)
+                # mode: post-indexed
+                k = "%s\t%s, [%s], %s" %(instr.instr, d, b, o)
+                lst.extend([i, j, k])
+    return lst
+
+
+def generate_ls_instrs():
+    lst = []
+    for i in LS_core_list:
+        lst.extend(ls_instr_vars(i))
+    return lst
+
+
+
 class LDM:
     def __init__(self, instr, store, arm_only, stack):
         self.instr = instr
@@ -99,7 +164,12 @@ LDM_list = [
 LDM_reglist = []
 for first_reg in range(0, 12):
     for n in range(first_reg, 12):
-        LDM_reglist.append(", ".join("r%d" % (i) for i in range(first_reg, n)))
+        if LDM_reglist and LDM_reglist[-1][0] == first_reg:
+            base_list = list(LDM_reglist[-1])
+        else:
+            base_list = []
+        base_list.append(n)
+        LDM_reglist.append(base_list)
 
 
 if __name__ == "__main__":
@@ -109,4 +179,7 @@ if __name__ == "__main__":
         print inst.instr
     for reglist in LDM_reglist:
         print reglist
+    print ls_instr_offsets()
+    for i in generate_ls_instrs():
+        print i
 
