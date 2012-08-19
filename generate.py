@@ -22,6 +22,8 @@ __email__     = "cdall@cs.columbia.edu"
 __copyright__ = "Copyright 2012, Virtual Open Systems"
 __license__   = "GPL"
 
+DATA_SIZE = 4096
+
 class Extra:
     NONE   = 0
     UNPRIV = 1
@@ -34,7 +36,6 @@ class LS_core:
         self.extra = extra
         self.length = length
         self.signed = signed
-        pass
 
 #
 # List of core load/store instructions
@@ -77,7 +78,7 @@ LS_core_list = [
 #
 # For testing we use:
 #  - Dest reg:   r0, r3
-#  - Base reg:   r2, r5
+#  - Base reg:   r2, r5  (preload to start and end)
 #  - Offset reg: r8, r11 (preload to 8, 16)
 #
 # The following combinations show the (mostly) valid combinations:
@@ -93,20 +94,64 @@ LS_core_list = [
 #  - test RRX shift on scaled register
 #
 
-def ls_instr_offsets():
+class Addressing:
+    def __init__(self, end, offset, data_off):
+        self.end = end              # if end, base is end of data
+        self.offset = offset
+        self.data_off = data_off
+        self.addr_spec = ""
+
+
+def ls_instr_addrs():
     lst = []
-    imm_offsets = [0, 13, 16, 124, 255, 1020, 4095]
-    reg_offsets = [8, 11]
-    shift_amts = [2, 3]
-    shifts = ["LSL", "LSR", "ASR", "ROR"]
-    shift_offsets = []
-    for s in shifts:
-        for amt in shift_amts:
-            shift_offsets.append("%s #%d" % (s, amt))
-    lst.extend(["#%d" % (off) for off in imm_offsets])
-    lst.extend(["r%d" % (reg) for reg in reg_offsets])
-    lst.extend(["r8, %s" % (s) for s in shift_offsets])
+
+    lst.append(  Addressing(0,     "#0",     0)  )
+    lst.append(  Addressing(0,    "#13",    13)  )
+    lst.append(  Addressing(0,    "#16",    16)  )
+    lst.append(  Addressing(0,   "#124",   124)  )
+    lst.append(  Addressing(0,   "#255",   255)  )
+    lst.append(  Addressing(0,  "#4095",  4095)  )
+
+    lst.append(  Addressing(1,    "#-0",  DATA_SIZE - (1 +   0)  )
+    lst.append(  Addressing(1,   "#-13",  DATA_SIZE - (1 +  13)  )
+    lst.append(  Addressing(1,   "#-16",  DATA_SIZE - (1 +  16)  )
+    lst.append(  Addressing(1,  "#-124",  DATA_SIZE - (1 + 124)  )
+    lst.append(  Addressing(1,  "#-255",  DATA_SIZE - (1 + 255)  )
+    lst.append(  Addressing(1, "#-4095",  DATA_SIZE - (1 +4095)  )
+
+    lst.append(  Addressing(0, "r8",   8)  )
+    lst.append(  Addressing(0, "r11", 16)  )
+
+    lst.append(  Addressing(0,  "r8, LSL #1",   16)  )
+    lst.append(  Addressing(0,  "r8, LSL #2",   32)  )
+    lst.append(  Addressing(0, "r11, LSR #1",    8)  )
+
     return lst
+
+# As input, the base register should be simply %1
+def generate_ls_test(instr, dst, addr, ls_len):
+    if ls_len == 1:
+        cast = "char"
+    elif ls_len == 2:
+        cast = "short"
+    elif ls_len == 4:
+        cast = "int"
+    elif ls_len == 8:
+        cast = "long long"
+
+    if not addr.end:
+        base = "io_data"
+    else:
+        base = "(io_data + %d - 1)" % (DATA_SIZE)
+
+
+    code = """
+        asm volatile("%s\n\t"
+                     "mov %0, r%d" : "=r"(out) :
+                                     "r" (%s));
+        assert(out == *(%s *)(io_data + offset));
+""" % (instr, dst, base, cast, addr.data_off)
+    return code
 
 off_list = ls_instr_offsets()
 def ls_instr_vars(instr):
@@ -129,7 +174,9 @@ def ls_instr_vars(instr):
 
 def generate_ls_instrs():
     lst = []
+    code = "\tprint("Perform code load/store tests\\n");\n\n"""
     for i in LS_core_list:
+
         lst.extend(ls_instr_vars(i))
     return lst
 
